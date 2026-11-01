@@ -15,12 +15,17 @@ footer{margin-top:3rem;font-size:.9rem;color:#555;border-top:1px solid #eee;padd
 <p class="sub">Dedupe, trim, and tidy a CSV in seconds. Everything runs in your browser; your file is never uploaded.</p>
 <div class="box"><input type="file" id="file" accept=".csv,text/csv"></div>
 <fieldset><legend>Cleanup options</legend>
-<label><input type="checkbox" id="trim" checked> Trim extra spaces in every cell</label>
+<label><input type="checkbox" id="trim" checked> Trim extra spaces in every cell (runs before dedupe)</label>
 <label><input type="checkbox" id="empty" checked> Remove empty rows</label>
 <label><input type="checkbox" id="emptyCols" checked> Remove empty columns</label>
 <label><input type="checkbox" id="dedupe" checked> Remove duplicate rows</label>
+<div style="margin-left:1.5rem">
+<label>Match on: <select id="dmode"><option value="row">Whole row</option><option value="cols">Selected column(s)</option></select>
+ Keep: <select id="keep"><option value="first">First occurrence</option><option value="last">Last occurrence</option></select></label>
 <label><input type="checkbox" id="ci"> Treat duplicates as case-insensitive</label>
+<div id="dcols"></div></div>
 <label><input type="checkbox" id="headers"> Tidy headers (Title Case, no stray spaces)</label>
+<div><b>Lowercase columns</b> (e.g. emails): <span id="lcols"><i>load a file to choose</i></span></div>
 </fieldset>
 <p><button id="go" disabled>Clean my CSV</button> <button id="dl" disabled>Download cleaned CSV</button></p>
 <div id="report"></div><div id="preview"></div>
@@ -34,22 +39,39 @@ if(q){if(c=='"'){if(t[i+1]=='"'){f+='"';i++}else q=false}else f+=c}
 else if(c=='"')q=true;else if(c==','){row.push(f);f=''}else if(c=='\n'||c=='\r'){if(c=='\r'&&t[i+1]=='\n')i++;row.push(f);rows.push(row);row=[];f=''}else f+=c}
 if(f!==''||row.length){row.push(f);rows.push(row)}return rows}
 function toCSV(r){return r.map(x=>x.map(v=>/[",\n\r]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v).join(',')).join('\r\n')}
-const $=id=>document.getElementById(id);let raw=null,out=null,name='cleaned.csv';
-$('file').onchange=e=>{const f=e.target.files[0];if(!f)return;name=f.name.replace(/\.csv$/i,'')+'-cleaned.csv';
-const r=new FileReader();r.onload=()=>{raw=r.result.replace(/^\uFEFF/,'');$('go').disabled=false};r.readAsText(f)};
-$('go').onclick=()=>{let rows=parseCSV(raw);const start=rows.length;let s={trimmed:0,empty:0,dupes:0,cols:0};
-if(!rows.length)return;const w=Math.max(...rows.map(r=>r.length));rows=rows.map(r=>{while(r.length<w)r.push('');return r});
-if($('trim').checked)rows=rows.map(r=>r.map(v=>{const n=v.replace(/\s+/g,' ').trim();if(n!==v)s.trimmed++;return n}));
+// o: {trim,empty,emptyCols,dedupe,dmode:'row'|'cols',dcols:[idx],keep:'first'|'last',ci,headers,lower:[idx]} (indexes refer to original columns)
+function clean(rows,o){if(!rows.length)return{out:[],s:{}};const w=Math.max(...rows.map(r=>r.length));
+rows=rows.map(r=>{r=r.slice();while(r.length<w)r.push('');return r});
+const s={before:rows.length-1,trimmed:0,lowered:0,empty:0,cols:0,dupes:0};
+if(o.trim)rows=rows.map(r=>r.map(v=>{const n=v.replace(/\s+/g,' ').trim();if(n!==v)s.trimmed++;return n}));
 let [head,...body]=rows;
-if($('empty').checked){const b=body.length;body=body.filter(r=>r.some(v=>v.trim()!==''));s.empty=b-body.length}
-if($('emptyCols').checked){const keep=head.map((h,i)=>h.trim()!==''||body.some(r=>r[i].trim()!==''));s.cols=keep.filter(k=>!k).length;
+if(o.lower&&o.lower.length)body=body.map(r=>r.map((v,i)=>{if(o.lower.includes(i)){const n=v.toLowerCase();if(n!==v)s.lowered++;return n}return v}));
+if(o.empty){const b=body.length;body=body.filter(r=>r.some(v=>v.trim()!==''));s.empty=b-body.length}
+let idx=head.map((_,i)=>i);
+if(o.dedupe){const byCols=o.dmode==='cols'&&o.dcols&&o.dcols.length;const key=r=>{let k=byCols?o.dcols.map(i=>r[i]):r;if(o.ci)k=k.map(v=>v.toLowerCase());return JSON.stringify(k)};
+const b=body.length,seen=new Set();let src=o.keep==='last'?body.slice().reverse():body;
+src=src.filter(r=>{const k=key(r);if(seen.has(k))return false;seen.add(k);return true});body=o.keep==='last'?src.reverse():src;s.dupes=b-body.length}
+if(o.emptyCols){const keep=head.map((h,i)=>h.trim()!==''||body.some(r=>r[i].trim()!==''));s.cols=keep.filter(k=>!k).length;
 head=head.filter((_,i)=>keep[i]);body=body.map(r=>r.filter((_,i)=>keep[i]))}
-if($('dedupe').checked){const seen=new Set(),b=body.length;body=body.filter(r=>{const k=JSON.stringify($('ci').checked?r.map(v=>v.toLowerCase()):r);if(seen.has(k))return false;seen.add(k);return true});s.dupes=b-body.length}
-if($('headers').checked)head=head.map(h=>h.trim().replace(/[_\s]+/g,' ').toLowerCase().replace(/\b\w/g,c=>c.toUpperCase()));
-out=[head,...body];
+if(o.headers)head=head.map(h=>h.trim().replace(/[_\s]+/g,' ').toLowerCase().replace(/\b\w/g,c=>c.toUpperCase()));
+s.after=body.length;return{out:[head,...body],s}}
+if(typeof module!=='undefined')module.exports={parseCSV,toCSV,clean};
+const $=id=>document.getElementById(id);let raw=null,out=null,name='cleaned.csv',hdr=[];
+const esc=v=>String(v).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const boxes=(id,cls)=>hdr.map((h,i)=>`<label style="display:inline-block;margin-right:1rem"><input type="checkbox" class="${cls}" value="${i}"> ${esc(h||'Column '+(i+1))}</label>`).join('');
+const picked=cls=>[...document.querySelectorAll('.'+cls+':checked')].map(x=>+x.value);
+function syncD(){$('dcols').style.display=$('dmode').value==='cols'?'block':'none'}
+$('dmode').onchange=syncD;
+$('file').onchange=e=>{const f=e.target.files[0];if(!f)return;name=f.name.replace(/\.csv$/i,'')+'-cleaned.csv';
+const r=new FileReader();r.onload=()=>{raw=r.result.replace(/^\uFEFF/,'');hdr=(parseCSV(raw)[0]||[]).map(h=>h.trim());
+$('dcols').innerHTML='Columns to match on: '+boxes('dcols','dc');$('lcols').innerHTML=boxes('lcols','lc');syncD();$('go').disabled=false};r.readAsText(f)};
+$('go').onclick=()=>{const o={trim:$('trim').checked,empty:$('empty').checked,emptyCols:$('emptyCols').checked,dedupe:$('dedupe').checked,
+dmode:$('dmode').value,dcols:picked('dc'),keep:$('keep').value,ci:$('ci').checked,headers:$('headers').checked,lower:picked('lc')};
+if(o.dedupe&&o.dmode==='cols'&&!o.dcols.length){alert('Pick at least one column to match duplicates on.');return}
+const {out:res,s}=clean(parseCSV(raw),o);if(!res.length)return;out=res;
 $('report').style.display='block';
-$('report').textContent=`Rows before: ${start-1} data rows\nRows after: ${body.length}\nDuplicate rows removed: ${s.dupes}\nEmpty rows removed: ${s.empty}\nEmpty columns removed: ${s.cols}\nCells with extra spaces fixed: ${s.trimmed}`;
-$('preview').innerHTML='<table>'+out.slice(0,11).map((r,i)=>'<tr>'+r.map(v=>`<${i?'td':'th'}>${v.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}</${i?'td':'th'}>`).join('')+'</tr>').join('')+'</table>';
+$('report').textContent=`Data rows before: ${s.before}\n1. Trim: ${s.trimmed} cells fixed (0 rows removed)\n2. Lowercase: ${s.lowered} cells changed (0 rows removed)\n3. Empty rows removed: ${s.empty}\n4. Duplicate rows removed: ${s.dupes}${o.dedupe?` (matched on ${o.dmode==='cols'?o.dcols.map(i=>hdr[i]).join(', '):'whole row'}, kept ${o.keep})`:''}\n5. Empty columns removed: ${s.cols}\nData rows after: ${s.after} (total removed: ${s.before-s.after})\n\nPreview (first 20 rows) below. Check it, then download.`;
+$('preview').innerHTML='<table>'+out.slice(0,21).map((r,i)=>'<tr>'+r.map(v=>`<${i?'td':'th'}>${esc(v)}</${i?'td':'th'}>`).join('')+'</tr>').join('')+'</table>'+(out.length>21?`<p>…and ${out.length-21} more rows</p>`:'');
 $('dl').disabled=false};
 $('dl').onclick=()=>{const b=new Blob(['\uFEFF'+toCSV(out)],{type:'text/csv'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=name;a.click()};
 </script></body></html>
