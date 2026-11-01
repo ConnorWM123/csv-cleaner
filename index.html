@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Free CSV Cleaner – dedupe, trim, tidy (runs in your browser)</title>
+<meta name="description" content="Free, private CSV cleaner. Remove duplicate rows, trim spaces, drop empty rows and columns. Your file never leaves your browser.">
+<style>
+body{font-family:system-ui,sans-serif;max-width:820px;margin:2rem auto;padding:0 1rem;color:#222;line-height:1.5}
+h1{margin-bottom:.2rem}.sub{color:#666;margin-top:0}
+.box{border:2px dashed #bbb;border-radius:10px;padding:1.5rem;text-align:center;margin:1rem 0}
+label{display:block;margin:.3rem 0}button{background:#2d6cdf;color:#fff;border:0;border-radius:6px;padding:.6rem 1.2rem;font-size:1rem;cursor:pointer}
+button:disabled{background:#999}#report{background:#f4f6fa;border-radius:8px;padding:1rem;white-space:pre-line;display:none}
+table{border-collapse:collapse;font-size:.85rem;margin-top:1rem;overflow:auto;display:block}td,th{border:1px solid #ddd;padding:.25rem .5rem}
+footer{margin-top:3rem;font-size:.9rem;color:#555;border-top:1px solid #eee;padding-top:1rem}
+</style></head><body>
+<h1>Free CSV Cleaner</h1>
+<p class="sub">Dedupe, trim, and tidy a CSV in seconds. Everything runs in your browser; your file is never uploaded.</p>
+<div class="box"><input type="file" id="file" accept=".csv,text/csv"></div>
+<fieldset><legend>Cleanup options</legend>
+<label><input type="checkbox" id="trim" checked> Trim extra spaces in every cell</label>
+<label><input type="checkbox" id="empty" checked> Remove empty rows</label>
+<label><input type="checkbox" id="emptyCols" checked> Remove empty columns</label>
+<label><input type="checkbox" id="dedupe" checked> Remove duplicate rows</label>
+<label><input type="checkbox" id="ci"> Treat duplicates as case-insensitive</label>
+<label><input type="checkbox" id="headers"> Tidy headers (Title Case, no stray spaces)</label>
+</fieldset>
+<p><button id="go" disabled>Clean my CSV</button> <button id="dl" disabled>Download cleaned CSV</button></p>
+<div id="report"></div><div id="preview"></div>
+<footer>
+<p>If this saved you time, you can <a href="https://ko-fi.com/connormartin95">buy me a coffee</a>.</p>
+<p>Organize your work too: <a href="https://hyper-pull-2c7.notion.site/FREE-Job-Application-Tracker-Lite-40aefb050c4381d2ad4bf6eab705fb09">free and paid Notion templates by @connormartin</a>.</p>
+</footer>
+<script>
+function parseCSV(t){const rows=[];let row=[],f='',q=false;for(let i=0;i<t.length;i++){const c=t[i];
+if(q){if(c=='"'){if(t[i+1]=='"'){f+='"';i++}else q=false}else f+=c}
+else if(c=='"')q=true;else if(c==','){row.push(f);f=''}else if(c=='\n'||c=='\r'){if(c=='\r'&&t[i+1]=='\n')i++;row.push(f);rows.push(row);row=[];f=''}else f+=c}
+if(f!==''||row.length){row.push(f);rows.push(row)}return rows}
+function toCSV(r){return r.map(x=>x.map(v=>/[",\n\r]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v).join(',')).join('\r\n')}
+const $=id=>document.getElementById(id);let raw=null,out=null,name='cleaned.csv';
+$('file').onchange=e=>{const f=e.target.files[0];if(!f)return;name=f.name.replace(/\.csv$/i,'')+'-cleaned.csv';
+const r=new FileReader();r.onload=()=>{raw=r.result.replace(/^\uFEFF/,'');$('go').disabled=false};r.readAsText(f)};
+$('go').onclick=()=>{let rows=parseCSV(raw);const start=rows.length;let s={trimmed:0,empty:0,dupes:0,cols:0};
+if(!rows.length)return;const w=Math.max(...rows.map(r=>r.length));rows=rows.map(r=>{while(r.length<w)r.push('');return r});
+if($('trim').checked)rows=rows.map(r=>r.map(v=>{const n=v.replace(/\s+/g,' ').trim();if(n!==v)s.trimmed++;return n}));
+let [head,...body]=rows;
+if($('empty').checked){const b=body.length;body=body.filter(r=>r.some(v=>v.trim()!==''));s.empty=b-body.length}
+if($('emptyCols').checked){const keep=head.map((h,i)=>h.trim()!==''||body.some(r=>r[i].trim()!==''));s.cols=keep.filter(k=>!k).length;
+head=head.filter((_,i)=>keep[i]);body=body.map(r=>r.filter((_,i)=>keep[i]))}
+if($('dedupe').checked){const seen=new Set(),b=body.length;body=body.filter(r=>{const k=JSON.stringify($('ci').checked?r.map(v=>v.toLowerCase()):r);if(seen.has(k))return false;seen.add(k);return true});s.dupes=b-body.length}
+if($('headers').checked)head=head.map(h=>h.trim().replace(/[_\s]+/g,' ').toLowerCase().replace(/\b\w/g,c=>c.toUpperCase()));
+out=[head,...body];
+$('report').style.display='block';
+$('report').textContent=`Rows before: ${start-1} data rows\nRows after: ${body.length}\nDuplicate rows removed: ${s.dupes}\nEmpty rows removed: ${s.empty}\nEmpty columns removed: ${s.cols}\nCells with extra spaces fixed: ${s.trimmed}`;
+$('preview').innerHTML='<table>'+out.slice(0,11).map((r,i)=>'<tr>'+r.map(v=>`<${i?'td':'th'}>${v.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}</${i?'td':'th'}>`).join('')+'</tr>').join('')+'</table>';
+$('dl').disabled=false};
+$('dl').onclick=()=>{const b=new Blob(['\uFEFF'+toCSV(out)],{type:'text/csv'});const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=name;a.click()};
+</script></body></html>
